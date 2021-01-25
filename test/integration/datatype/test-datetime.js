@@ -57,7 +57,10 @@ describe('datetime', () => {
 
   it('standard date', function (done) {
     //using distant server, time might be different
-    if (Conf.baseConfig.host !== 'localhost' && Conf.baseConfig.host !== 'mariadb.example.com')
+    if (
+      (Conf.baseConfig.host !== 'localhost' && Conf.baseConfig.host !== 'mariadb.example.com') ||
+      process.env.MAXSCALE_TEST_DISABLE
+    )
       this.skip();
 
     shareConn
@@ -90,6 +93,28 @@ describe('datetime', () => {
     if (!shareConn.info.isMariaDB() && !shareConn.info.hasMinVersion(5, 6)) this.skip();
     base
       .createConnection({ timezone: 'Z' })
+      .then((conn) => {
+        conn
+          .query({ sql: 'select CAST(? as datetime) d' }, [date])
+          .then((res) => {
+            assert.equal(Object.prototype.toString.call(res[0].d), '[object Date]');
+            assert.equal(res[0].d.getDate(), date.getDate());
+            assert.equal(res[0].d.getHours(), date.getHours());
+            assert.equal(res[0].d.getMinutes(), date.getMinutes());
+            assert.equal(res[0].d.getSeconds(), date.getSeconds());
+            conn.close();
+            done();
+          })
+          .catch(done);
+      })
+      .catch(done);
+  });
+
+  it('date text America/New_York timezone', function (done) {
+    const date = new Date('1999-01-31 12:13:14');
+    if (!shareConn.info.isMariaDB() && !shareConn.info.hasMinVersion(5, 6)) this.skip();
+    base
+      .createConnection({ timezone: 'America/New_York' })
       .then((conn) => {
         conn
           .query({ sql: 'select CAST(? as datetime) d' }, [date])

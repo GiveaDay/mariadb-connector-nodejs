@@ -24,146 +24,94 @@ describe('multi-results', () => {
     if (multiStmtConn) multiStmtConn.end();
   });
 
-  // it('simple do 1', function (done) {
-  //   shareConn
-  //     .query('DO 1')
-  //     .then((rows) => {
-  //       assert.deepEqual(rows, {
-  //         affectedRows: 0,
-  //         insertId: 0,
-  //         warningStatus: 0
-  //       });
-  //       done();
-  //     })
-  //     .catch(done);
-  // });
-
-  it('duplicate column', function (done) {
-    base
-      .createConnection()
-      .then((conn) => {
-        conn.query('CREATE TEMPORARY TABLE t (i int)');
-        conn.query('INSERT INTO t(i) VALUES (1)');
-        conn
-          .query({ rowsAsArray: true, sql: 'SELECT i, i FROM t' })
-          .then((res) => {
-            conn
-              .query('SELECT i, i FROM t')
-              .then((res) => {
-                conn.end();
-                done(new Error('must have thrown an error'));
-              })
-              .catch((err) => {
-                assert.isTrue(err.message.includes('Error in results, duplicate field name `i`'));
-                assert.equal(err.errno, 45040);
-                assert.equal(err.sqlState, 42000);
-                assert.equal(err.code, 'ER_DUPLICATE_FIELD');
-                conn.end();
-                done();
-              });
-          })
-          .catch((err) => {
-            conn.end();
-            done(err);
-          });
+  it('simple do 1', function (done) {
+    shareConn
+      .query('DO 1')
+      .then((rows) => {
+        assert.deepEqual(rows, {
+          affectedRows: 0,
+          insertId: 0,
+          warningStatus: 0
+        });
+        done();
       })
       .catch(done);
   });
 
-  it('duplicate column disabled', function (done) {
-    base
-      .createConnection({ checkDuplicate: false })
-      .then((conn) => {
-        conn.query('CREATE TEMPORARY TABLE t (i int)');
-        conn.query('INSERT INTO t(i) VALUES (1)');
-        conn
-          .query({ rowsAsArray: true, sql: 'SELECT i, i FROM t' })
-          .then((res) => {
-            conn
-              .query('SELECT i, i FROM t')
-              .then((res) => {
-                assert.deepEqual(res, [
-                  {
-                    i: 1
-                  }
-                ]);
-                conn.end();
-                done();
-              })
-              .catch(done);
-          })
-          .catch((err) => {
-            conn.end();
-            done(err);
-          });
-      })
-      .catch(done);
+  it('duplicate column', async function () {
+    const conn = await base.createConnection();
+    await conn.query('DROP TABLE IF EXISTS t');
+    await conn.query('CREATE TABLE t (i int)');
+    await conn.beginTransaction();
+    await conn.query('INSERT INTO t(i) VALUES (1)');
+    await conn.query({ rowsAsArray: true, sql: 'SELECT i, i FROM t' });
+    try {
+      await conn.query('SELECT i, i FROM t');
+      throw new Error('must have thrown an error');
+    } catch (err) {
+      assert.isTrue(err.message.includes('Error in results, duplicate field name `i`'));
+      assert.equal(err.errno, 45040);
+      assert.equal(err.sqlState, 42000);
+      assert.equal(err.code, 'ER_DUPLICATE_FIELD');
+      conn.rollback();
+      conn.end();
+    }
   });
 
-  it('duplicate column nestTables', function (done) {
-    base
-      .createConnection({ nestTables: true })
-      .then((conn) => {
-        conn.query('CREATE TEMPORARY TABLE t (i int)');
-        conn.query('INSERT INTO t(i) VALUES (1)');
-        conn
-          .query({ rowsAsArray: true, sql: 'SELECT i, i FROM t' })
-          .then((res) => {
-            conn
-              .query('SELECT i, i FROM t')
-              .then((res) => {
-                conn.end();
-                done(new Error('must have thrown an error'));
-              })
-              .catch((err) => {
-                assert.isTrue(
-                  err.message.includes('Error in results, duplicate field name `t`.`i`')
-                );
-                assert.equal(err.errno, 45040);
-                assert.equal(err.sqlState, 42000);
-                assert.equal(err.code, 'ER_DUPLICATE_FIELD');
-                conn.end();
-                done();
-              });
-          })
-          .catch((err) => {
-            conn.end();
-            done(err);
-          });
-      })
-      .catch(done);
+  it('duplicate column disabled', async function () {
+    const conn = await base.createConnection({ checkDuplicate: false });
+    await conn.query('DROP TABLE IF EXISTS t');
+    await conn.query('CREATE TABLE t (i int)');
+    await conn.beginTransaction();
+    await conn.query('INSERT INTO t(i) VALUES (1)');
+    await conn.query({ rowsAsArray: true, sql: 'SELECT i, i FROM t' });
+    const res = await conn.query('SELECT i, i FROM t');
+    assert.deepEqual(res, [
+      {
+        i: 1
+      }
+    ]);
+    conn.end();
   });
 
-  it('duplicate column disabled nestTables', function (done) {
-    base
-      .createConnection({ checkDuplicate: false, nestTables: true })
-      .then((conn) => {
-        conn.query('CREATE TEMPORARY TABLE t (i int)');
-        conn.query('INSERT INTO t(i) VALUES (1)');
-        conn
-          .query({ rowsAsArray: true, sql: 'SELECT i, i FROM t' })
-          .then((res) => {
-            conn
-              .query('SELECT i, i FROM t')
-              .then((res) => {
-                assert.deepEqual(res, [
-                  {
-                    t: {
-                      i: 1
-                    }
-                  }
-                ]);
-                conn.end();
-                done();
-              })
-              .catch(done);
-          })
-          .catch((err) => {
-            conn.end();
-            done(err);
-          });
-      })
-      .catch(done);
+  it('duplicate column nestTables', async function () {
+    const conn = await base.createConnection({ nestTables: true });
+    await conn.query('DROP TABLE IF EXISTS t');
+    await conn.query('CREATE TABLE t (i int)');
+    await conn.beginTransaction();
+
+    await conn.query('INSERT INTO t(i) VALUES (1)');
+    await conn.query({ rowsAsArray: true, sql: 'SELECT i, i FROM t' });
+    try {
+      await conn.query('SELECT i, i FROM t');
+      conn.end();
+      throw new Error('must have thrown an error');
+    } catch (err) {
+      assert.isTrue(err.message.includes('Error in results, duplicate field name `t`.`i`'));
+      assert.equal(err.errno, 45040);
+      assert.equal(err.sqlState, 42000);
+      assert.equal(err.code, 'ER_DUPLICATE_FIELD');
+      conn.end();
+    }
+  });
+
+  it('duplicate column disabled nestTables', async function () {
+    const conn = await base.createConnection({ checkDuplicate: false, nestTables: true });
+    await conn.query('DROP TABLE IF EXISTS t');
+    await conn.query('CREATE TABLE t (i int)');
+    await conn.beginTransaction();
+
+    await conn.query('INSERT INTO t(i) VALUES (1)');
+    await conn.query({ rowsAsArray: true, sql: 'SELECT i, i FROM t' });
+    const res = await conn.query('SELECT i, i FROM t');
+    assert.deepEqual(res, [
+      {
+        t: {
+          i: 1
+        }
+      }
+    ]);
+    conn.end();
   });
 
   it('simple do 1 with callback', function (done) {
@@ -226,7 +174,7 @@ describe('multi-results', () => {
     shareConn
       .query('SELECT 1')
       .then((rows) => {
-        assert.deepEqual(rows, [{ '1': 1 }]);
+        assert.deepEqual(rows, [{ 1: 1 }]);
         done();
       })
       .catch(done);
@@ -236,7 +184,7 @@ describe('multi-results', () => {
     shareConn
       .query('select 1', (err, rows) => {})
       .then((rows) => {
-        assert.deepEqual(rows, [{ '1': 1 }]);
+        assert.deepEqual(rows, [{ 1: 1 }]);
         done();
       })
       .catch(done);
@@ -248,7 +196,7 @@ describe('multi-results', () => {
         .query('select 1')
         .then((obj) => {
           assert.equal(obj.length, 2);
-          assert.deepEqual(obj[0], [{ '1': 1 }]);
+          assert.deepEqual(obj[0], [{ 1: 1 }]);
           conn.end();
           done();
         })
@@ -257,14 +205,14 @@ describe('multi-results', () => {
   });
 
   it('query result with option metaPromiseAsArray multiple', function (done) {
-    if (process.env.SKYSQL) this.skip();
+    if (process.env.SKYSQL || process.env.SKYSQL_HA) this.skip();
     base.createConnection({ metaAsArray: true, multipleStatements: true }).then((conn) => {
       conn
         .query('select 1; select 2')
         .then((obj) => {
           assert.equal(obj[0].length, 2);
           assert.equal(obj[1].length, 2);
-          assert.deepEqual(obj[0], [[{ '1': 1 }], [{ '2': 2 }]]);
+          assert.deepEqual(obj[0], [[{ 1: 1 }], [{ 2: 2 }]]);
           conn.end();
           done();
         })
@@ -282,7 +230,7 @@ describe('multi-results', () => {
           if (err) {
             done(err);
           } else {
-            assert.deepEqual(rows, [{ '1': 1 }]);
+            assert.deepEqual(rows, [{ 1: 1 }]);
             callbackConn.end();
             done();
           }
@@ -292,7 +240,7 @@ describe('multi-results', () => {
   });
 
   it('multiple selects', function (done) {
-    if (process.env.SKYSQL) this.skip();
+    if (process.env.SKYSQL || process.env.SKYSQL_HA) this.skip();
     multiStmtConn
       .query('SELECT 1 as t; SELECT 2 as t2; SELECT 3 as t3')
       .then((rows) => {
@@ -306,7 +254,7 @@ describe('multi-results', () => {
   });
 
   it('multiple selects with callbacks', function (done) {
-    if (process.env.SKYSQL) this.skip();
+    if (process.env.SKYSQL || process.env.SKYSQL_HA) this.skip();
     const callbackConn = base.createCallbackConnection({
       multipleStatements: true
     });
@@ -331,7 +279,7 @@ describe('multi-results', () => {
   });
 
   it('multiple result type', function (done) {
-    if (process.env.SKYSQL) this.skip();
+    if (process.env.SKYSQL || process.env.SKYSQL_HA) this.skip();
     multiStmtConn
       .query('SELECT 1 as t; DO 1')
       .then((rows) => {
@@ -348,7 +296,7 @@ describe('multi-results', () => {
   });
 
   it('multiple result type with callback', function (done) {
-    if (process.env.SKYSQL) this.skip();
+    if (process.env.SKYSQL || process.env.SKYSQL_HA) this.skip();
     const callbackConn = base.createCallbackConnection({
       multipleStatements: true
     });
@@ -376,7 +324,7 @@ describe('multi-results', () => {
   });
 
   it('multiple result type with multiple rows', function (done) {
-    if (process.env.SKYSQL) this.skip();
+    if (process.env.SKYSQL || process.env.SKYSQL_HA) this.skip();
     //using sequence engine
     if (!shareConn.info.isMariaDB() || !shareConn.info.hasMinVersion(10, 1)) this.skip();
     multiStmtConn
@@ -396,14 +344,14 @@ describe('multi-results', () => {
   });
 
   it('multiple result from procedure', function (done) {
-    if (process.env.SKYSQL) this.skip();
+    if (process.env.SKYSQL || process.env.SKYSQL_HA) this.skip();
     shareConn.query('CREATE PROCEDURE myProc () BEGIN  SELECT 1; SELECT 2; END');
     shareConn
       .query('call myProc()')
       .then((rows) => {
         assert.equal(rows.length, 3);
-        assert.deepEqual(rows[0], [{ '1': 1 }]);
-        assert.deepEqual(rows[1], [{ '2': 2 }]);
+        assert.deepEqual(rows[0], [{ 1: 1 }]);
+        assert.deepEqual(rows[1], [{ 2: 2 }]);
         assert.deepEqual(rows[2], {
           affectedRows: 0,
           insertId: 0,

@@ -50,20 +50,52 @@ To use the Connector, you need to import the package into your application code.
 const mariadb = require('mariadb');
 ```
 
-## Timezone consideration
+## Recommendation
 
-It's not recommended, but in some cases, Node.js and database are configured with different timezone. 
+### Timezone consideration
 
-By default, `timezone` option is set to 'local' value, indicating to use client timezone, so no conversion will be done.
+Client and database can have a different timezone.
 
-If client and server timezone differ, `timezone` option has to be set to server timezone.
-- 'auto' value means client will request server timezone when creating a connection, and use server timezone afterwhile. 
-- To avoid this additional command on connection, `timezone` can be set to [IANA time zone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones). 
+The connector has different solutions when this is the case.
+the `timezone` option can have the following value:
+* 'local' (default) : connector doesn't do any conversion. If the database has a different timezone, there will be an offset issue. 
+* 'auto' : connector retrieve server timezone. Dates will be converted if server timezone differs from client
+* IANA timezone / offset, example 'America/New_York' or '+06:00'. 
 
-Connector will then convert date to server timezone, rather than the current Node.js timezone. 
+##### IANA timezone / offset
 
+When using IANA timezone, the connector will set the connection timezone to the timezone. 
+this can throw an error on connection if timezone is unknown by the server (see [mariadb timezone documentation](https://mariadb.com/kb/en/time-zones/), timezone tables might be not initialized)
+If you are sure the server is using that timezone, this step can be skipped with the option `skipSetTimezone`.
 
-## Security consideration
+If timezone correspond to javascript default timezone, then no conversion will be done
+
+##### Timezone setting recommendation.
+The best is to have the same timezone on client and database, then keep the 'local' default value. 
+
+If different, then either client or server has to convert date. 
+In general, that is best to use client conversion, to avoid putting any unneeded stress on the database. 
+timezone has to be set to the IANA timezone corresponding to server timezone and disabled `skipSetTimezone` option since you are sure that the server has the corresponding timezone.
+
+example: client use 'America/New_York' by default, and server 'America/Los_Angeles'.
+execute 'SELECT @@system_time_zone' on the server. that will give the server default timezone. 
+the server can return POSIX timezone like 'PDT' (Pacific Daylight Time). 
+IANA timezone correspondence must be found :   (see [IANA timezone List](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)) and configure client-side. 
+This will ensure DST (automatic date saving time change will be handled) 
+
+```js
+const mariadb = require('mariadb');
+const conn = mariadb.createConnection({
+            host: process.env.DB_HOST, 
+            user: process.env.DB_USER, 
+            password: process.env.DB_PWD,
+            timezone: 'America/Los_Angeles',
+            skipSetTimezone: true
+});
+```
+
+  
+### Security consideration
 
 Connection details such as URL, username, and password are better hidden into environment variables.
 using code like : 
@@ -104,6 +136,12 @@ DB_PWD=secretPasswrd
 ```
 .env files must NOT be pushed into repository,  using .gitignore
 
+### Default options consideration
+
+For new project, enabling option `supportBigInt` is recommended (It will be in a future 3.x version).
+
+This option permits to avoid exact value for big integer (value > 2^53) (see [javascript ES2020 
+BigInt](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt) ) 
 
 # Promise API
 
@@ -326,8 +364,8 @@ Specific options for pool cluster are :
 |option|description|type|default| 
 |---:|---|:---:|:---:| 
 | **`canRetry`** | When getting a connection from pool fails, can cluster retry with other pools |*boolean* | true |
-| **`removeNodeErrorCount`** | Maximum number of consecutive connection fail from a pool before pool is removed from cluster configuration. null means node won't be removed|*integer* | 5 |
-| **`restoreNodeTimeout`** | delay before a pool can be reused after a connection fails. 0 = can be reused immediately (in ms) |*integer*| 0|
+| **`removeNodeErrorCount`** | Maximum number of consecutive connection fail from a pool before pool is removed from cluster configuration. Infinity means node won't be removed|*integer* | 5 |
+| **`restoreNodeTimeout`** | delay before a pool can be reused after a connection fails. 0 = can be reused immediately (in ms) |*integer*| 1000|
 | **`defaultSelector`** | default pools selector. Can be 'RR' (round-robin), 'RANDOM' or 'ORDER' (use in sequence = always use first pools unless fails) |*string*| 'RR'|
 
 ## `version → String`
@@ -460,6 +498,7 @@ connection.query('select * from animals')
 * [`nestTables`](#nestTables)
 * [`dateStrings`](#dateStrings)
 * [`supportBigNumbers`](#supportBigNumbers)
+* [`supportBigint`](#supportBigint)
 * [`bigNumberStrings`](#bigNumberStrings)
 
 Those options can be set on the query level, but are usually set at the connection level, and will then apply to all queries. 
@@ -595,14 +634,34 @@ Whether you want the Connector to retrieve date values as strings, rather than `
 
 *boolean, default: false*
 
-Whether the query should return integers as [`Long`](https://www.npmjs.com/package/long) objects when they are not in the [safe](documentation/connection-options.md#support-for-big-integer) range.
+Whether the query should return integers as [`Long`](https://www.npmjs.com/package/long) objects when they are not in
+ the [safe](/documentation/connection-options.md#big-integer-support) range.
+
+
+#### `supportBigInt`
+
+*boolean, default: false*
+
+Whether the query should return javascript ES2020 [BigInt](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt) 
+for [BIGINT](https://mariadb.com/kb/en/bigint/) data type. 
+This ensures having expected value even for value > 2^53 (see [safe](/documentation/connection-options.md#big-integer-support) range).
+This option can be set to query level, supplanting connection option `supportBigInt` value. 
+
+```javascript
+await shareConn.query('CREATE TEMPORARY TABLE bigIntTable(id BIGINT)');
+await shareConn.query("INSERT INTO bigIntTable value ('9007199254740993')");
+const res = await shareConn.query('select * from bigIntTable');
+// res :  [{ id: 9007199254740992 }] (not exact value)
+const res2 = await shareConn.query({sql: 'select * from bigIntTable', supportBigInt: true});
+// res :  [{ id: 9007199254740993n }] (exact value)
+```
 
 
 #### `bigNumberStrings`
 
 *boolean, default: false*
 
-Whether the query should return integers as strings when they are not in the [safe](documentation/connection-options.md#support-for-big-integer) range.
+Whether the query should return integers as strings when they are not in the [safe](documentation/connection-options.md#big-integer-support) range.
 
 
 #### `typeCast`
@@ -975,7 +1034,10 @@ const myTable = "table:a"
 const cmd = 'SELECT * FROM ' + conn.escapeId(myTable) + ' where myCol = ' + conn.escape(myColVar);
 // cmd value will be:
 // "SELECT * FROM `table:a` where myCol = 'let\\'s go'"
-
+// using template literals:
+con.query(`SELECT * FROM ${con.escapeId(myTable)} where myCol = ?`, [myColVar])
+  .then(res => { ... })
+  .catch(err=> { ... }); 
 ```
 
 
@@ -1278,7 +1340,7 @@ const mariadb = require('mariadb');
 const cluster = mariadb.createPoolCluster({ removeNodeErrorCount: 20, restoreNodeTimeout: 5000 });
 cluster.add("master", { host: 'mydb1.com', user: 'myUser', connectionLimit: 5 });
 cluster.add("slave1", { host: 'mydb2.com', user: 'myUser', connectionLimit: 5 });
-cluster.add("slave2", { host: 'mydb3.com', user: 'myUser', connectionLimit: 5 });*
+cluster.add("slave2", { host: 'mydb3.com', user: 'myUser', connectionLimit: 5 });
 cluster.on('remove', node => {
   console.log(`node ${node} was removed`);
 })

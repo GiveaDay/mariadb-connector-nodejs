@@ -17,9 +17,12 @@ describe('streaming', () => {
   before(function (done) {
     this.timeout(20000);
     shareConn
-      .query(
-        'CREATE TEMPORARY TABLE Streaming (id int NOT NULL AUTO_INCREMENT, b longblob, c varchar(10), d longblob, e varchar(10), PRIMARY KEY (id))'
-      )
+      .query('DROP TABLE IF EXISTS Streaming')
+      .then(() => {
+        return shareConn.query(
+          'CREATE TABLE Streaming (id int NOT NULL AUTO_INCREMENT, b longblob, c varchar(10), d longblob, e varchar(10), PRIMARY KEY (id))'
+        );
+      })
       .then(() => {
         return shareConn.query('SELECT @@max_allowed_packet as t');
       })
@@ -39,10 +42,13 @@ describe('streaming', () => {
   it('Streaming url content', function (done) {
     this.timeout(30000);
     shareConn
-      .query(
-        'CREATE TEMPORARY TABLE StreamingContent (id int NOT NULL AUTO_INCREMENT, b longblob, c' +
-          ' varchar(10), PRIMARY KEY (id))'
-      )
+      .query('DROP TABLE IF EXISTS StreamingContent')
+      .then(() => {
+        return shareConn.query(
+          'CREATE TABLE StreamingContent (id int NOT NULL AUTO_INCREMENT, b longblob, c' +
+            ' varchar(10), PRIMARY KEY (id))'
+        );
+      })
       .then(() => {
         const https = require('https');
         https.get(
@@ -60,86 +66,62 @@ describe('streaming', () => {
       });
   });
 
-  it('Streaming single parameter', function (done) {
+  it('Streaming single parameter', async function () {
     if (maxAllowedSize < size) this.skip();
     this.timeout(20000);
     const r = fs.createReadStream(fileName);
-    shareConn
-      .query('truncate Streaming')
-      .then(() => {
-        return shareConn.query('insert into Streaming(b) values(?)', [r]);
-      })
-      .then(() => {
-        return shareConn.query('SELECT b from Streaming');
-      })
-      .then((rows) => {
-        assert.equal(size, rows[0].b.length);
-        assert.deepEqual(rows, [{ b: buf }]);
-        done();
-      })
-      .catch(done);
+    await shareConn.query('truncate Streaming');
+    await shareConn.beginTransaction();
+    await shareConn.query('insert into Streaming(b) values(?)', [r]);
+    const rows = await shareConn.query('SELECT b from Streaming');
+    assert.equal(size, rows[0].b.length);
+    assert.deepEqual(rows, [{ b: buf }]);
   });
 
-  it('Streaming multiple parameter', function (done) {
+  it('Streaming multiple parameter', async function () {
     this.timeout(20000);
     if (maxAllowedSize < size) this.skip();
     const r = fs.createReadStream(halfFileName);
     const r2 = fs.createReadStream(halfFileName);
-    shareConn
-      .query('truncate Streaming')
-      .then(() => {
-        return shareConn.query('insert into Streaming(b, c, d, e) values(?, ?, ?, ?)', [
-          r,
-          't1',
-          r2,
-          't2'
-        ]);
-      })
-      .then(() => {
-        return shareConn.query('SELECT * from Streaming');
-      })
-      .then((rows) => {
-        assert.equal(size / 2, rows[0].b.length);
-        assert.equal(size / 2, rows[0].d.length);
-        assert.deepEqual(rows, [{ id: 1, b: buf2, c: 't1', d: buf2, e: 't2' }]);
-        done();
-      })
-      .catch(done);
+    await shareConn.query('truncate Streaming');
+    await shareConn.beginTransaction();
+    await shareConn.query('insert into Streaming(b, c, d, e) values(?, ?, ?, ?)', [
+      r,
+      't1',
+      r2,
+      't2'
+    ]);
+    const rows = await shareConn.query('SELECT * from Streaming');
+    assert.equal(size / 2, rows[0].b.length);
+    assert.equal(size / 2, rows[0].d.length);
+    assert.deepEqual(rows, [{ id: 1, b: buf2, c: 't1', d: buf2, e: 't2' }]);
   });
 
-  it('Streaming multiple parameter begin no stream', function (done) {
+  it('Streaming multiple parameter begin no stream', async function () {
     if (maxAllowedSize < size) this.skip();
     this.timeout(20000);
     const r = fs.createReadStream(halfFileName);
     const r2 = fs.createReadStream(halfFileName);
-    shareConn
-      .query('truncate Streaming')
-      .then(() => {
-        return shareConn.query('insert into Streaming(c, b, e, d) values(?, ?, ?, ?)', [
-          't1',
-          r,
-          't2',
-          r2
-        ]);
-      })
-      .then(() => {
-        return shareConn.query('SELECT * from Streaming');
-      })
-      .then((rows) => {
-        assert.equal(size / 2, rows[0].b.length);
-        assert.equal(size / 2, rows[0].d.length);
-        assert.deepEqual(rows, [{ id: 1, b: buf2, c: 't1', d: buf2, e: 't2' }]);
-        done();
-      })
-      .catch(done);
+    await shareConn.query('truncate Streaming');
+    await shareConn.beginTransaction();
+    await shareConn.query('insert into Streaming(c, b, e, d) values(?, ?, ?, ?)', [
+      't1',
+      r,
+      't2',
+      r2
+    ]);
+    const rows = await shareConn.query('SELECT * from Streaming');
+    assert.equal(size / 2, rows[0].b.length);
+    assert.equal(size / 2, rows[0].d.length);
+    assert.deepEqual(rows, [{ id: 1, b: buf2, c: 't1', d: buf2, e: 't2' }]);
   });
 
-  it('Streaming multiple parameter ensure max callstack', function (done) {
+  it('Streaming multiple parameter ensure max callstack', async function () {
     if (maxAllowedSize < size) this.skip();
     this.timeout(20000);
     const r = fs.createReadStream(halfFileName);
 
-    let createTable = 'CREATE TEMPORARY TABLE Streaming2 (b longblob';
+    let createTable = 'CREATE TABLE Streaming2 (b longblob';
     let insertSql = 'insert into Streaming2 values(?';
     const params = [r];
     const max = 200;
@@ -151,23 +133,16 @@ describe('streaming', () => {
     createTable += ')';
     insertSql += ')';
 
-    shareConn
-      .query(createTable)
-      .then(() => {
-        return shareConn.query(insertSql, params);
-      })
-      .then(() => {
-        return shareConn.query('SELECT * from Streaming2');
-      })
-      .then((rows) => {
-        assert.equal(size / 2, rows[0].b.length);
-        assert.deepEqual(rows[0].b, buf2);
-        for (let i = 0; i < max; i++) {
-          assert.equal(rows[0]['t' + i], i);
-        }
-        done();
-      })
-      .catch(done);
+    await shareConn.query('DROP TABLE IF EXISTS Streaming2');
+    await shareConn.query(createTable);
+    await shareConn.beginTransaction();
+    await shareConn.query(insertSql, params);
+    const rows = await shareConn.query('SELECT * from Streaming2');
+    assert.equal(size / 2, rows[0].b.length);
+    assert.deepEqual(rows[0].b, buf2);
+    for (let i = 0; i < max; i++) {
+      assert.equal(rows[0]['t' + i], i);
+    }
   });
 
   function createTmpFiles(done) {

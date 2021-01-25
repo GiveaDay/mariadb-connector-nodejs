@@ -50,7 +50,7 @@ describe('Placeholder', () => {
         { 'param-3': 30, 'param-1': 10, 'param-2': 20 }
       )
       .then((rows) => {
-        assert.deepEqual(rows, [{ val1: 10, val3: 30, '20': 20 }]);
+        assert.deepEqual(rows, [{ val1: 10, val3: 30, 20: 20 }]);
         done();
       })
       .catch(done);
@@ -91,8 +91,19 @@ describe('Placeholder', () => {
       .catch(done);
   });
 
-  it('query undefined named parameter', function (done) {
-    const handleResult = function (err) {
+  it('query undefined named parameter', async function () {
+    const conn = await base.createConnection({ namedPlaceholders: true });
+    await conn.query('DROP TABLE IF EXISTS undefinedParameter');
+    await conn.query('CREATE TABLE undefinedParameter (id int, id2 int, id3 int)');
+    try {
+      await conn.query('INSERT INTO undefinedParameter values (:param3, :param1, :param2)', {
+        param1: 1,
+        param3: 3,
+        param4: 4
+      });
+      conn.end();
+      new Error('must have thrown error!');
+    } catch (err) {
       assert.equal(err.errno, 45018);
       assert.equal(err.code, 'ER_PLACEHOLDER_UNDEFINED');
       assert.equal(err.sqlState, 'HY000');
@@ -103,28 +114,8 @@ describe('Placeholder', () => {
             "sql: INSERT INTO undefinedParameter values (:param3, :param1, :param2) - parameters:{'param1':1,'param3':3,'param4':4}"
         )
       );
-    };
-
-    base
-      .createConnection({ namedPlaceholders: true })
-      .then((conn) => {
-        conn.query('CREATE TEMPORARY TABLE undefinedParameter (id int, id2 int, id3 int)');
-        conn
-          .query('INSERT INTO undefinedParameter values (:param3, :param1, :param2)', {
-            param1: 1,
-            param3: 3,
-            param4: 4
-          })
-          .then(() => {
-            done(new Error('must have thrown error!'));
-          })
-          .catch((err) => {
-            handleResult(err);
-            conn.end();
-            done();
-          });
-      })
-      .catch(done);
+      conn.end();
+    }
   });
 
   it('query missing placeholder parameter', function (done) {
@@ -143,11 +134,16 @@ describe('Placeholder', () => {
     base
       .createConnection({ namedPlaceholders: true })
       .then((conn) => {
-        conn.query('CREATE TEMPORARY TABLE execute_missing_parameter (id int, id2 int, id3 int)');
         conn
-          .query('INSERT INTO execute_missing_parameter values (:t1, :t2, :t3)', {
-            t1: 1,
-            t3: 3
+          .query('DROP TABLE IF EXISTS execute_missing_parameter')
+          .then(() => {
+            return conn.query('CREATE TABLE execute_missing_parameter (id int, id2 int, id3 int)');
+          })
+          .then(() => {
+            return conn.query('INSERT INTO execute_missing_parameter values (:t1, :t2, :t3)', {
+              t1: 1,
+              t3: 3
+            });
           })
           .then(() => {
             done(new Error('must have thrown error!'));
@@ -176,9 +172,14 @@ describe('Placeholder', () => {
     base
       .createConnection({ namedPlaceholders: true })
       .then((conn) => {
-        conn.query('CREATE TEMPORARY TABLE execute_no_parameter (id int, id2 int, id3 int)');
         conn
-          .query('INSERT INTO execute_no_parameter values (:t1, :t2, :t3)', [])
+          .query('DROP TABLE IF EXISTS execute_no_parameter')
+          .then(() => {
+            return conn.query('CREATE TABLE execute_no_parameter (id int, id2 int, id3 int)');
+          })
+          .then(() => {
+            return conn.query('INSERT INTO execute_no_parameter values (:t1, :t2, :t3)', []);
+          })
           .then(() => {
             done(new Error('must have thrown error!'));
           })
@@ -195,13 +196,18 @@ describe('Placeholder', () => {
     base
       .createConnection({ namedPlaceholders: true })
       .then((conn) => {
-        conn.query('CREATE TEMPORARY TABLE to_much_parameters (id int, id2 int, id3 int)');
         conn
-          .query('INSERT INTO to_much_parameters values (:t2, :t0, :t1)', {
-            t0: 0,
-            t1: 1,
-            t2: 2,
-            t3: 3
+          .query('DROP TABLE IF EXISTS to_much_parameters')
+          .then(() => {
+            return conn.query('CREATE TABLE to_much_parameters (id int, id2 int, id3 int)');
+          })
+          .then(() => {
+            return conn.query('INSERT INTO to_much_parameters values (:t2, :t0, :t1)', {
+              t0: 0,
+              t1: 1,
+              t2: 2,
+              t3: 3
+            });
           })
           .then(() => {
             conn.end();
@@ -212,23 +218,16 @@ describe('Placeholder', () => {
       .catch(done);
   });
 
-  it('parameter last', (done) => {
+  it('parameter last', async () => {
     const value = "'`\\";
-    base
-      .createConnection({ namedPlaceholders: true })
-      .then((conn) => {
-        conn.query('CREATE TEMPORARY TABLE parse(t varchar(128))');
-        conn.query('INSERT INTO `parse` value (:val)', { val: value });
-        conn
-          .query('select * from `parse` where t = :val', { val: value })
-          .then((res) => {
-            assert.strictEqual(res[0].t, value);
-            conn.end();
-            done();
-          })
-          .catch(done);
-      })
-      .catch(done);
+    const conn = await base.createConnection({ namedPlaceholders: true });
+    await conn.query('DROP TABLE IF EXISTS parse');
+    await conn.query('CREATE TABLE parse(t varchar(128))');
+    await conn.beginTransaction();
+    await conn.query('INSERT INTO `parse` value (:val)', { val: value });
+    const res = await conn.query('select * from `parse` where t = :val', { val: value });
+    assert.strictEqual(res[0].t, value);
+    conn.end();
   });
 
   it('query with value without placeholder', function (done) {
@@ -238,7 +237,7 @@ describe('Placeholder', () => {
         conn
           .query('select 1', [2])
           .then((rows) => {
-            assert.deepEqual(rows, [{ '1': 1 }]);
+            assert.deepEqual(rows, [{ 1: 1 }]);
             conn.end();
             done();
           })
